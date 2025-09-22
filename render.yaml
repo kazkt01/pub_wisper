@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: whisper-fastapi
+    name: pub-wisper
     env: docker
     plan: starter
     autoDeploy: true
