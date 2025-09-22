@@ -25,4 +25,4 @@ RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${MODEL_NA
 
 EXPOSE 8000
 # ★並列を抑える（Freeだとこれが効く）
-CMD ["sh","-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --limit-concurrency 1 --log-level info"]
+CMD ["sh","-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --log-level info"]
