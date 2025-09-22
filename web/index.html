@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Whisper Transcriber (Minimal)</title>
+  <style>
+    :root { --bg:#0b0c10; --card:#121318; --fg:#e6e6e6; --muted:#9aa0a6; --acc:#7aa2f7; }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background:linear-gradient(180deg, #ebebeb 0%, #0e1016 100%); color:var(--fg);
+      display:grid; place-items:center; min-height:100vh; padding:24px;
+    }
+    .card {
+      width:min(900px, 100%); background:var(--card); border-radius:20px; padding:24px;
+      box-shadow: 0 10px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    h1 { margin:0 0 8px; font-size:22px; letter-spacing:.2px; }
+    p.hint { margin:0 0 16px; color:var(--muted); font-size:13px; }
+    .row { display:flex; gap:12px; align-items:center; margin:12px 0 16px; flex-wrap:wrap; }
+    input[type="file"] {
+      padding:10px; background:#181a22; border:1px dashed #2a2e39; border-radius:12px; color:var(--muted);
+    }
+    select, button {
+      padding:10px 14px; border-radius:12px; border:1px solid #2a2e39; background:#1a1c24; color:var(--fg);
+    }
+    button.primary { background:var(--acc); color:#0c1020; border:none; font-weight:600; }
+    button[disabled] { opacity:.6; cursor:not-allowed; }
+    .out { margin-top:18px; padding:16px; background:#0e1117; border:1px solid #222533; border-radius:14px; min-height:120px; white-space:pre-wrap; }
+    .actions { display:flex; gap:8px; margin-top:12px; }
+    .small { font-size:12px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Whisper Transcriber</h1>
+    <p class="hint">音声ファイル（m4a/mp3/wav…）を選んで「文字起こし」。最小構成のローカル版。</p>
+
+    <div class="row">
+      <input id="file" type="file" accept="audio/*,video/*" />
+      <label class="small">言語:</label>
+      <select id="lang">
+        <option value="ja" selected>日本語</option>
+        <option value="en">English</option>
+        <option value="">自動判定（遅くなる場合あり）</option>
+      </select>
+      <button id="go" class="primary">文字起こし</button>
+      <button id="dlSrt" disabled>SRTダウンロード</button>
+    </div>
+
+    <div id="status" class="small"></div>
+    <div id="output" class="out"></div>
+  </div>
+
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const fileEl = $("#file");
+    const langEl = $("#lang");
+    const goBtn = $("#go");
+    const dlBtn = $("#dlSrt");
+    const statusEl = $("#status");
+    const outEl = $("#output");
+    let lastSegments = null;
+
+    function makeSrt(segments) {
+      function ts(sec){
+        const h = String(Math.floor(sec/3600)).padStart(2,"0");
+        const m = String(Math.floor((sec%3600)/60)).padStart(2,"0");
+        const s = String(Math.floor(sec%60)).padStart(2,"0");
+        const ms = String(Math.floor((sec%1)*1000)).padStart(3,"0");
+        return `${h}:${m}:${s},${ms}`;
+      }
+      return segments.map((seg, i)=>[
+        i+1,
+        `${ts(seg.start)} --> ${ts(seg.end)}`,
+        (seg.text||"").trim(), ""
+      ].join("\n")).join("\n");
+    }
+
+    async function transcribe(){
+      const f = fileEl.files?.[0];
+      if(!f){ alert("ファイルを選んでね"); return; }
+      goBtn.disabled = true; dlBtn.disabled = true; lastSegments = null;
+      outEl.textContent = ""; statusEl.textContent = "アップロード中…";
+
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("language", langEl.value);
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch("/api/transcribe", { method:"POST", body: fd });
+        if(!res.ok){
+          const txt = await res.text();
+          throw new Error(`${res.status} ${txt}`);
+        }
+        const data = await res.json();
+        lastSegments = data.segments || [];
+        const plain = data.text || lastSegments.map(s=>s.text).join("");
+        outEl.textContent = plain;
+        const sec = ((performance.now()-t0)/1000).toFixed(1);
+        statusEl.textContent = `done: lang=${data.language} / ${lastSegments.length} セグメント / ${sec}s`;
+        dlBtn.disabled = false;
+      } catch (e){
+        console.error(e);
+        statusEl.textContent = "エラー: " + e.message;
+      } finally {
+        goBtn.disabled = false;
+      }
+    }
+
+    function downloadSrt(){
+      if(!lastSegments?.length) return;
+      const srt = makeSrt(lastSegments);
+      const blob = new Blob([srt], {type:"text/plain;charset=utf-8"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "transcript.srt";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    goBtn.addEventListener("click", transcribe);
+    dlBtn.addEventListener("click", downloadSrt);
+  </script>
+</body>
+</html>
