@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: whisper-fastapi
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /
+    disk:
+      name: model-cache
+      mountPath: /root/.cache
+      sizeGB: 2
