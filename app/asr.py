@@ -1,10 +1,27 @@
+# app/asr.py
 import os, shutil, subprocess
 from pathlib import Path
 from typing import List, Dict
 from faster_whisper import WhisperModel
 
-# 初回確認を軽くしたいので既定は small（必要なら環境変数で上書き）
-MODEL_NAME = os.getenv("WHISPER_MODEL", "small")
+# --- ENV解決（MODEL_NAME/COMPUTE_TYPE を優先、互換で WHISPER_* も見る） ---
+def _resolve_model_name() -> str:
+    return (
+        os.getenv("MODEL_NAME")
+        or os.getenv("WHISPER_MODEL")
+        or "base"  # Freeはbase推奨（smallはOOMしやすい）
+    )
+
+def _resolve_compute_type(device: str) -> str:
+    ct = os.getenv("COMPUTE_TYPE") or os.getenv("WHISPER_COMPUTE_TYPE")
+    if ct:
+        return ct
+    # 既定はGPU=float16, CPU=int8
+    return "float16" if device == "cuda" else "int8"
+
+# キャッシュ/焼き込み場所（Dockerfileで HF_HOME=/root/.cache を設定済み）
+CACHE_DIR = os.getenv("HF_HOME", "/root/.cache")
+
 _model = None
 
 def _detect_device() -> str:
@@ -14,27 +31,39 @@ def _detect_device() -> str:
     except Exception:
         return "cpu"
 
-def _pick_compute_type(device: str) -> str:
-    # 明示指定があれば優先
-    if ct := os.getenv("WHISPER_COMPUTE_TYPE"):
-        return ct
-    # GPUはfloat16、CPUはint8が一番無難
-    return "float16" if device == "cuda" else "int8"
-
 def _load_model() -> WhisperModel:
     global _model
     if _model is not None:
         return _model
+
     device = _detect_device()
-    prefer = _pick_compute_type(device)
-    # CPU向けフォールバック候補
-    candidates = [prefer, "int8", "int8_float32", "float32"] if device == "cpu" else [prefer, "float32"]
+    name = _resolve_model_name()
+    prefer = _resolve_compute_type(device)
+
+    # CPU省メモリ向けの候補を複数試す
+    candidates = (
+        [prefer, "int8", "int8_float16", "float32"]
+        if device == "cpu"
+        else [prefer, "float32"]
+    )
+
+    # 省メモリ設定（Free対策）
+    cpu_threads = int(os.getenv("CPU_THREADS", "1"))
+    num_workers = int(os.getenv("NUM_WORKERS", "1"))
+
     last_err = None
     for ct in candidates:
         try:
-            print(f"[whisper] loading model={MODEL_NAME} device={device} compute_type={ct}")
-            _model = WhisperModel(MODEL_NAME, device=device, compute_type=ct)
-            print(f"[whisper] ready: {MODEL_NAME} ({device}/{ct})")
+            print(f"[whisper] loading model={name} device={device} compute_type={ct}")
+            _model = WhisperModel(
+                name,
+                device=device,
+                compute_type=ct,
+                download_root=CACHE_DIR,
+                cpu_threads=cpu_threads,
+                num_workers=num_workers,
+            )
+            print(f"[whisper] ready: {name} ({device}/{ct})")
             return _model
         except Exception as e:
             print(f"[whisper] failed compute_type={ct}: {e}")
@@ -42,7 +71,7 @@ def _load_model() -> WhisperModel:
     raise RuntimeError(f"failed to load model; tried={candidates}: {last_err}")
 
 def _to_wav16k(src: Path, dst: Path):
-    # 1) ffmpeg（推奨）
+    # 1) ffmpeg
     if shutil.which("ffmpeg"):
         subprocess.run(
             ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "16000", "-f", "wav", str(dst)],
@@ -56,7 +85,7 @@ def _to_wav16k(src: Path, dst: Path):
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         return
-    # 3) ライブラリでフォールバック（最終手段）
+    # 3) ライブラリ最終手段
     try:
         import librosa, soundfile as sf
         y, _ = librosa.load(str(src), sr=16000, mono=True)
@@ -69,12 +98,11 @@ def transcribe_path(src_path: Path, language: str = "ja") -> Dict:
     _to_wav16k(src_path, tmp_wav)
 
     model = _load_model()
-    # 依存を増やさない最小構成：VADなし・beam軽め
     segments, info = model.transcribe(
         str(tmp_wav),
         language=language or None,
         vad_filter=False,
-        beam_size=1,
+        beam_size=1,  # 省メモリ
     )
 
     items = []
