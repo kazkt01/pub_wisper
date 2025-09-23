@@ -72,22 +72,23 @@ def _load_model() -> WhisperModel:
             last_err = e
     raise RuntimeError(f"failed to load model; tried={candidates}: {last_err}")
 
+# 入力ファイルを 16kHz・モノラル・WAV に変換
 def _to_wav16k(src: Path, dst: Path):
-    # 1) ffmpeg
+    # 1 ffmpegありなし確認
     if shutil.which("ffmpeg"):
         subprocess.run(
             ["ffmpeg", "-y", "-i", str(src), "-ac", "1", "-ar", "16000", "-f", "wav", str(dst)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         return
-    # 2) mac標準のafconvert
+    # 2 なければ、mac標準のafconvert　←renderデプロイなのでいらないローカルで作った時の名残、一応残してる
     if shutil.which("afconvert"):
         subprocess.run(
             ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(src), str(dst)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         return
-    # 3) ライブラリ最終手段
+    # 3 それでもなければ、ライブラリ最終手段　
     try:
         import librosa, soundfile as sf
         y, _ = librosa.load(str(src), sr=16000, mono=True)
@@ -95,10 +96,12 @@ def _to_wav16k(src: Path, dst: Path):
     except Exception as e:
         raise RuntimeError("no converter available (ffmpeg/afconvert/librosa)") from e
 
+# 文字起こし本体
 def transcribe_path(src_path: Path, language: str = "ja") -> Dict:
     tmp_wav = src_path.with_suffix(".16k.wav")
     _to_wav16k(src_path, tmp_wav)
 
+    # whisperのモデルをロード　以下設定
     model = _load_model()
     segments, info = model.transcribe(
         str(tmp_wav),
@@ -122,10 +125,11 @@ def transcribe_path(src_path: Path, language: str = "ja") -> Dict:
     text = "".join(i["text"] for i in items).strip()
     return {"language": info.language, "text": text, "segments": items}
 
+# 秒を SRT の時刻表記 HH:MM:SS,mmm に変換。↓字幕とかつけたいならsrtファイル出力がベストではあるが不要
 def _ts(s: float) -> str:
     h = int(s // 3600); m = int((s % 3600) // 60); sec = s % 60
     return f"{h:02d}:{m:02d}:{int(sec):02d},{int((sec % 1) * 1000):03d}"
-
+# セグメント配列を SRT ファイル文字列に整形。
 def to_srt(segments: List[Dict]) -> str:
     lines = []
     for i, seg in enumerate(segments, start=1):
