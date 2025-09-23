@@ -19,9 +19,11 @@ from fastapi.staticfiles import StaticFiles
 
 from app.asr import transcribe_path, to_srt
 
+# アプリのインスタンスを作成
 app = FastAPI(title="Whisper Minimal API")
 
-# --- CORS（必要に応じて許可ドメインを絞る） ---
+# --- CORS（必要に応じて許可ドメインを絞る）、CORS（クロスオリジンリソース共有） ---
+# 別ドメインのフロントからAPIを呼べるようにCORSを緩く設定。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,6 +33,8 @@ app.add_middleware(
 )
 
 # --- 静的配信 ---
+# /ui で web フォルダの内容を返す。
+# web/index.html がフロントエンドのUI。
 app.mount("/ui", StaticFiles(directory="web", html=True), name="web")
 
 # ルートは UI を返す（200）

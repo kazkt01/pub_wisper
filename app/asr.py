@@ -5,13 +5,15 @@ from typing import List, Dict
 from faster_whisper import WhisperModel
 
 # --- ENV解決（MODEL_NAME/COMPUTE_TYPE を優先、互換で WHISPER_* も見る） ---
+# 環境変数から利用するモデル名を決定。
+# 指定がなければ、"base"（軽量版）を使う。
 def _resolve_model_name() -> str:
     return (
         os.getenv("MODEL_NAME")
         or os.getenv("WHISPER_MODEL")
         or "base"  # Freeはbase推奨（smallはOOMしやすい）
     )
-
+# GPUで計算したいならint8では、なく"float16"を使用しよう
 def _resolve_compute_type(device: str) -> str:
     ct = os.getenv("COMPUTE_TYPE") or os.getenv("WHISPER_COMPUTE_TYPE")
     if ct:
