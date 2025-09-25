@@ -23,9 +23,9 @@ def _resolve_compute_type(device: str) -> str:
 
 # キャッシュ/焼き込み場所（Dockerfileで HF_HOME=/root/.cache を設定済み）
 CACHE_DIR = os.getenv("HF_HOME", "/root/.cache")
-
 _model = None
 
+# CUDAが使えるかチェック、なければ、CPUだがこれは、実際不要
 def _detect_device() -> str:
     try:
         import torch
